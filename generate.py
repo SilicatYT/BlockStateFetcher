@@ -51,6 +51,29 @@ def gen_block_id_provider_and_tags(): # Generates the "block_id" number provider
         json.dump(number_provider_data, f, separators=(',', ':'))
 
 
+def gen_property_value_class_tags(): # For block state properties that have more than 1 value class, generates a block tag for every value class except the last one
+    with BLOCK_VALUE_CLASSES_PATH.open("r") as t:
+        block_value_data = json.load(t)
+
+    with BLOCK_STATE_PROPERTIES_PATH.open("r") as f:
+        data = json.load(f)
+
+        for property, value_classes in data.items():
+            value_classes_count = len(value_classes)
+            if value_classes_count <= 1: continue
+
+            for i in range(1, value_classes_count): # Skip the 1st instead of last one, because heuristically, earlier value classes have more block entries
+                ids = [block_id for block_id, states in block_value_data.items() if states.get(property, 0) == i]
+                block_tag_data = {"values": ids}
+
+                folder_path = BLOCK_TAGS_FOLDER_PATH / "value_class" / property
+                folder_path.mkdir(parents=True, exist_ok=True)
+
+                file_path = folder_path / f"{i}.json"
+                with file_path.open("w") as f2:
+                    json.dump(block_tag_data, f2, separators=(',', ':'))
+
+
 def gen_individual_block_state_providers():
     pass # TODO: If a block state property's value range contains 4 or more possible values, use binary search. Within the binary search (except for the highest possible layer), use a default provider so it doesn't need to check the final value or the last block tag
 
@@ -58,4 +81,5 @@ def gen_individual_block_state_providers():
 # Run
 NUMBER_PROVIDERS_FOLDER_PATH.mkdir(parents=True, exist_ok=True)
 gen_block_id_provider_and_tags()
+gen_property_value_class_tags()
 gen_individual_block_state_providers()
