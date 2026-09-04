@@ -77,6 +77,41 @@ def gen_property_value_class_tags(block_value_data, properties): # For block sta
                 json.dump(block_tag_data, f, separators=(',', ':'))
 
 
+def get_block_state_groups(block_value_data): # A block state group is a collection of block ids with the same value class and the same available values for any given property
+    groups = {} # {"age":{<value_class>:{<tuple_of_possible_values>:[<blocks in that group>]}}, ...}
+    for block, block_data in block_value_data.items():
+        for property, value_data in block_data.items():
+            if not property in groups:
+                groups[property] = {}
+
+            value_class = value_data["value_class"]
+            if not value_class in groups[property]:
+                groups[property][value_class] = {}
+
+            possible_values = tuple(value_data["values"]) # Tuple because lists can't be keys
+            if not possible_values in groups[property][value_class]:
+                groups[property][value_class][possible_values] = []
+            groups[property][value_class][possible_values].append(block)
+
+    for property, group_data in list(groups.items()): # Values inside the list are still by reference
+
+        # Prune value classes with only 1 group
+        for value_class in list(group_data): # list() because otherwise I'd be iterating over the live object. Deleting while iterating is a bad idea
+            if len(group_data[value_class]) == 1:
+                del group_data[value_class]
+
+        # Prune property if no value classes remain
+        if len(group_data) == 0:
+            del groups[property]
+
+    return groups
+
+
+
+def gen_block_state_group_tags(groups):
+    pass
+
+
 def gen_individual_block_state_providers(block_property_data):
     for property, value_classes in block_property_data.items():
         if len(value_classes) == 1:
@@ -130,6 +165,12 @@ def get_individual_block_state_provider_body(property, possible_states, value_of
 # TODO: There's an MC bug that fails the "max" check if it's outside the current block's cap. Either wait until that bug is fixed, or add block tag checks, or don't do binary search. Or split the ages into different value classes too? Does this affect other block state properties as well?
 #       => Provide number providers that check for the value range block tag at the top (default: -1) that run special internal number providers that only work with the specific range. "Get all blockstates" for any block would directly run those internal ones
 
+# Logic:
+# - Inside a value class, name the block tags for "value range" 'branch'
+# - In the publicly available individual block state providers, first check the value class in a number dispatcher, and make it run another provider that checks the branch. OR FLATTEN THE TWO CHECKS INTO A SINGLE "block state group" CHECK? -> Don't flatten, because multiple block state groups could have the same values for this particular block state. That provider (inlined) calls the internal per-branch provider that uses binary search (basically the provider body).
+# - In the "get_block_state" (merged) provider, check the block state group at the very top (default to <none>), maybe binary search it if there are a lot of groups. Then inside, run the individual block state providers (the internal ones: At build-time, I already know which branch & value classes I'm on) and combine the results. Smallest to largest, or largest to smallest? Doesn't matter, I just need to be consistent. It's called "mixed-radix"
+# - I can re-use the same "get_block_state (merged)" provider for the "single int for whole block id + blockstate" and for "int for blockid, int for blockstate". I just need to add a different prefix at the end
+
 # Run
 NUMBER_PROVIDERS_FOLDER_PATH.mkdir(parents=True, exist_ok=True)
 
@@ -138,6 +179,9 @@ blocks = list(block_value_data.keys())
 bit_count = math.ceil(math.log2(len(blocks)))
 gen_block_id_tags(bit_count, blocks)
 gen_block_id_provider(bit_count)
+
+groups = get_block_state_groups(block_value_data)
+gen_block_state_group_tags(groups)
 
 block_property_data = get_block_property_data()
 properties = get_properties_with_mult_value_classes(block_property_data)
