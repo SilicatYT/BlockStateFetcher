@@ -10,11 +10,16 @@ BLOCK_VALUE_CLASSES_PATH = Path("")
 # ^ REPLACE PLACEHOLDERS ^
 
 BLOCK_TAGS_FOLDER_PATH = DESTINATION_FOLDER_PATH / DATAPACK_NAMESPACE / "tags/block"
-NUMBER_PROVIDERS_FOLDER_PATH = DESTINATION_FOLDER_PATH / DATAPACK_NAMESPACE / "number_provider"
+NUMBER_PROVIDERS_FOLDER_PATH = DESTINATION_FOLDER_PATH / DATAPACK_NAMESPACE / "context_int_provider"
 
 
 def get_block_value_data():
     with BLOCK_VALUE_CLASSES_PATH.open("r") as f:
+        data = json.load(f)
+    return data
+
+def get_block_property_data():
+    with BLOCK_STATE_PROPERTIES_PATH.open("r") as f:
         data = json.load(f)
     return data
 
@@ -40,24 +45,21 @@ def gen_block_id_tags(bit_count, blocks):
 
 
 def gen_block_id_provider(bit_count):
-    number_provider_data = {"type":"minecraft:sum","operands":[]}
+    number_provider_data = {"type":"minecraft:add","inputs":[]}
     for i in range(bit_count):
-        number_provider_data["operands"].append({"type":"minecraft:number_dispatcher","cases":[{"condition":{"type":"minecraft:match_block","blocks":f"#{DATAPACK_NAMESPACE}:block_id/b{i}"},"number_provider":2**i}]})
+        number_provider_data["inputs"].append({"type":"minecraft:conditional","condition":{"type":"minecraft:match_block","blocks":f"#{DATAPACK_NAMESPACE}:block_id/b{i}"},"on_true":2**i})
 
     file_path = NUMBER_PROVIDERS_FOLDER_PATH / "block_id.json"
     with file_path.open("w") as f:
         json.dump(number_provider_data, f, separators=(',', ':'))
 
 
-def get_properties_with_mult_value_classes():
-    with BLOCK_STATE_PROPERTIES_PATH.open("r") as f:
-        data = json.load(f)
-
+def get_properties_with_mult_value_classes(block_property_data):
     properties = {}
-    for property, value_classes in data.items():
+    for property, value_classes in block_property_data.items():
         count = len(value_classes)
-        if count >= 1: properties[property] = count
-
+        if count >= 1:
+            properties[property] = count
     return properties
 
 
@@ -88,6 +90,7 @@ bit_count = math.ceil(math.log2(len(blocks)))
 gen_block_id_tags(bit_count, blocks)
 gen_block_id_provider(bit_count)
 
-properties = get_properties_with_mult_value_classes()
+block_property_data = get_block_property_data()
+properties = get_properties_with_mult_value_classes(block_property_data)
 gen_property_value_class_tags(block_value_data, properties)
-gen_individual_block_state_providers(properties)
+gen_individual_block_state_providers(block_property_data)
