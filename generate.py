@@ -216,7 +216,7 @@ def get_individual_block_state_provider_body(property, all_value_class_states, b
 
     # Recursive case (Binary search)
     max_index = len(branch_state_indices) // 2
-    max_value = branch_state_indices[max_index]
+    max_value = all_value_class_states[branch_state_indices[max_index]]
     body = {"type":"minecraft:conditional","condition":{"type":"minecraft:match_block","state":{f"{property}":{"max":f"{max_value}"}}},"on_true":{},"on_false":{}}
     first_half = branch_state_indices[:max_index + 1] # [..., max_index]
     second_half = branch_state_indices[max_index + 1:] # (max_index, ...]
