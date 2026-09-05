@@ -101,20 +101,19 @@ def get_value_class_branches(groups): # Different branches of the same value cla
                 branches[property][value_class][values] = []
 
             branches[property][value_class][values].append(i)
-
     return branches
 
 
 def gen_value_class_tags(branches): # Block tag for each group within the value class, and a combined one for the total value class
     for property, value_classes in branches.items():
-        for value_class_index, branches in value_classes.items():
+        for value_class_index, branches_data in value_classes.items():
             folder_path = BLOCK_TAGS_FOLDER_PATH / "value_classes" / property / str(value_class_index)
             folder_path.mkdir(parents=True, exist_ok=True)
 
             value_class_block_tag_data = {"values": []}
 
-            for branch_index, groups in enumerate(branches.values()):
-                value_class_block_tag_data["values"].append(f"{DATAPACK_NAMESPACE}:value_classes/{property}/{value_class_index}/branch_{branch_index}.json")
+            for branch_index, groups in enumerate(branches_data.values()):
+                value_class_block_tag_data["values"].append(f"#{DATAPACK_NAMESPACE}:value_classes/{property}/{value_class_index}/branch_{branch_index}")
                 branch_block_tag_data = {"values": [f"#{DATAPACK_NAMESPACE}:groups/{group}" for group in groups]}
 
                 file_path = folder_path / f"branch_{branch_index}.json"
@@ -126,58 +125,102 @@ def gen_value_class_tags(branches): # Block tag for each group within the value 
                 json.dump(value_class_block_tag_data, f, separators=(',', ':'))
 
 
-def gen_individual_block_state_providers(block_property_data): # TODO: Rework so it distinguishes between the branches
-    for property, value_classes in block_property_data.items():
-        if len(value_classes) == 1:
-            number_provider_data = get_individual_block_state_provider_body(property, value_classes[0], 0)
+def gen_individual_block_state_providers(block_property_data, branches, groups): # TODO: Add binary search to get the value class & branch (Benchmark at which point it's worth it, because number provider complexity grows and the block tags get larger too). Add new block tags, or use "OR" in the checks? Also, clean up this function.
+    # Layer 1: Run the correct value class. Layer 2: Run the correct branch.
+    folder_path = NUMBER_PROVIDERS_FOLDER_PATH / "block_state"
+    folder_path.mkdir(parents=True, exist_ok=True)
 
-        elif len(value_classes) == 2:
-            number_provider_data = {"type":"minecraft:conditional","condition":{"type":"minecraft:match_block","blocks":f"#{DATAPACK_NAMESPACE}:value_class/{property}/1"},"on_true":{},"on_false":{}}
-            number_provider_data["on_true"] = get_individual_block_state_provider_body(property, value_classes[1], len(value_classes[0]))
-            number_provider_data["on_false"] = get_individual_block_state_provider_body(property, value_classes[0], 0)
+    blocks_per_group = list(groups.values())
 
+    for property, value_classes in branches.items():
+        nof_value_classes = len(value_classes)
+
+        if nof_value_classes == 1:
+            layer_1_provider_data = {"type":"minecraft:conditional","condition":{"type":"minecraft:match_block","blocks":f"#{DATAPACK_NAMESPACE}:value_classes/{property}/0/all"},"on_true":{},"on_false":-1}
         else:
-            number_provider_data = {"type":"minecraft:number_dispatcher","cases":[],"default":{}}
-            number_provider_data["default"] = get_individual_block_state_provider_body(property, value_classes[0], 0)
-            value_offset = 0
+            layer_1_provider_data = {"type":"minecraft:number_dispatcher","cases":[],"default":-1}
 
-            for i in range(1, len(value_classes)):
-                value_offset += len(value_classes[i - 1])
-                new_case = {"condition":{"type":"minecraft:match_block","blocks":f"#{DATAPACK_NAMESPACE}:value_class/{property}/{i}"},"value":{}}
-                new_case["value"] = get_individual_block_state_provider_body(property, value_classes[i], value_offset)
-                number_provider_data["cases"].append(new_case)
+        for value_class_index, branches_data in value_classes.items():
+            nof_branches = len(branches_data)
 
-        folder_path = NUMBER_PROVIDERS_FOLDER_PATH / "block_state"
-        folder_path.mkdir(parents=True, exist_ok=True)
-        file_path = folder_path / f"{property}.json"
-        with file_path.open("w") as f:
-            json.dump(number_provider_data, f, separators=(',', ':'))
+            groups_of_value_class = list(branches_data.values())
+            nof_blocks_per_branch = [sum([len(blocks_per_group[group]) for group in groups_of_value_class[branch_index]]) for branch_index in range(nof_branches)] # TODO: Double-check if the ordering is correct (Correct group, correct branch etc)
+            biggest_branch_index = nof_blocks_per_branch.index(max(nof_blocks_per_branch)) # First occurrence if multiple branches have the same number of blocks
+
+            if nof_branches == 1:
+                layer_2_provider_data = f"{DATAPACK_NAMESPACE}:zprivate/block_state/{property}/{value_class_index}/branch_0"
+            elif nof_branches == 2:
+                smaller_branch_index = 1 if biggest_branch_index == 0 else 0
+                layer_2_provider_data = {"type":"minecraft:conditional","condition":{"type":"minecraft:match_block","blocks":f"#{DATAPACK_NAMESPACE}:value_classes/{property}/0/branch_{smaller_branch_index}"},"on_true":f"{DATAPACK_NAMESPACE}:zprivate/block_state/{property}/{value_class_index}/branch_{smaller_branch_index}","on_false":f"{DATAPACK_NAMESPACE}:zprivate/block_state/{property}/{value_class_index}/branch_{biggest_branch_index}"}
+            else:
+                layer_2_provider_data = {"type":"minecraft:number_dispatcher","cases":[],"default":f"{DATAPACK_NAMESPACE}:zprivate/block_state/{property}/{value_class_index}/branch_{biggest_branch_index}"}
+                for branch_index in range(len(branches_data)):
+                    if branch_index == biggest_branch_index:
+                        continue
+                    layer_2_case = {"condition":{"type":"minecraft:match_block","blocks":f"#{DATAPACK_NAMESPACE}:value_classes/{property}/{value_class_index}/branch_{branch_index}"},"value":f"{DATAPACK_NAMESPACE}:zprivate/block_state/{property}/{value_class_index}/branch_{branch_index}"}
+                    layer_2_provider_data["cases"].append(layer_2_case)
+
+            # Fill layer 1
+            if nof_value_classes == 1:
+                layer_1_provider_data["on_true"] = layer_2_provider_data
+            else:
+                layer_1_case = {"condition":{"type":"minecraft:match_block","blocks":f"#{DATAPACK_NAMESPACE}:value_classes/{property}/{value_class_index}/all"},"value":layer_2_provider_data}
+                layer_1_provider_data["cases"].append(layer_1_case)
+
+            # Write file
+            file_path = folder_path / f"{property}.json"
+            with file_path.open("w") as f:
+                json.dump(layer_1_provider_data, f, separators=(',', ':'))
+
+    # Make internal branch-specific number providers (that were referenced earlier in this function)
+    for property, value_classes in block_property_data.items():
+        value_offset = 0
+        for value_class_index in range(len(value_classes)):
+            branches_data = branches[property][value_class_index]
+            possible_values = value_classes[value_class_index]
+            possible_value_indices_per_branch = list(branches[property][value_class_index].keys())
+            for branch_index in range(len(branches_data)):
+                branch_value_indices = possible_value_indices_per_branch[branch_index]
+                number_provider_data = get_individual_block_state_provider_body(property, possible_values, branch_value_indices, value_offset)
+
+                # Write file
+                folder_path = NUMBER_PROVIDERS_FOLDER_PATH / "zprivate" / "block_state" / property / str(value_class_index)
+                folder_path.mkdir(parents=True, exist_ok=True)
+                file_path = folder_path / f"branch_{branch_index}.json"
+                with file_path.open("w") as f:
+                    json.dump(number_provider_data, f, separators=(',', ':'))
+
+            value_offset += len(value_classes[value_class_index - 1])
+            # TODO: Maybe make the public number providers run pure "number dispatcher" without binary search or branch distinction, if that's faster if I don't already know the branch? Would need to depend on the property (smth like 'age' would benefit from binary search anyway, but then again, it has 8 branches). I could also experiment with merging the binary search for value classes & branches into a single binary search.
+            # => Make sure it's not slower than running a naïve number dispatcher without any grouping logic or binary search
 
 
-def get_individual_block_state_provider_body(property, possible_states, value_offset): # TODO: Rework so it distinguishes between the branches
+def get_individual_block_state_provider_body(property, all_value_class_states, branch_state_indices, value_offset):
+    # Map branch state indices to state values
+    all_branch_values = [all_value_class_states[i] for i in branch_state_indices]
+
     # Base cases
-    if len(possible_states) == 1:
-        return value_offset
+    if len(all_branch_values) == 1:
+        return branch_state_indices[0] + value_offset
 
-    if len(possible_states) == 2:
-        return {"type":"minecraft:conditional","condition":{"type":"minecraft:match_block","state":{f"{property}":f"{possible_states[0]}"}},"on_true":value_offset,"on_false":value_offset+1}
+    if len(all_branch_values) == 2:
+        return {"type":"minecraft:conditional","condition":{"type":"minecraft:match_block","state":{f"{property}":f"{all_branch_values[0]}"}},"on_true":branch_state_indices[0] + value_offset,"on_false":branch_state_indices[1] + value_offset}
 
-    if len(possible_states) == 3:
-        return {"type":"minecraft:number_dispatcher","cases":[{"condition":{"type":"minecraft:match_block","state":{f"{property}":f"{possible_states[0]}"}},"value":value_offset},{"condition":{"type":"minecraft:match_block","state":{f"{property}":f"{possible_states[1]}"}},"value":value_offset+1}],"default":value_offset+2}
+    if len(all_branch_values) == 3:
+        return {"type":"minecraft:number_dispatcher","cases":[{"condition":{"type":"minecraft:match_block","state":{f"{property}":f"{all_branch_values[0]}"}},"value":branch_state_indices[0] + value_offset},{"condition":{"type":"minecraft:match_block","state":{f"{property}":f"{all_branch_values[1]}"}},"value":branch_state_indices[1] + value_offset}],"default":branch_state_indices[2] + value_offset}
+
+    if len(all_branch_values) == 4: # I benchmarked, and this is still faster than binary search (TODO: Benchmark if this is the point where it flips)
+        return {"type":"minecraft:number_dispatcher","cases":[{"condition":{"type":"minecraft:match_block","state":{f"{property}":f"{all_branch_values[0]}"}},"value":branch_state_indices[0] + value_offset},{"condition":{"type":"minecraft:match_block","state":{f"{property}":f"{all_branch_values[1]}"}},"value":branch_state_indices[1] + value_offset},{"condition":{"type":"minecraft:match_block","state":{f"{property}":f"{all_branch_values[2]}"}},"value":branch_state_indices[2] + value_offset}],"default":branch_state_indices[3] + value_offset}
 
     # Recursive case (Binary search)
-    max_index = len(possible_states) // 2
-    max_value = possible_states[max_index]
+    max_index = len(branch_state_indices) // 2
+    max_value = branch_state_indices[max_index]
     body = {"type":"minecraft:conditional","condition":{"type":"minecraft:match_block","state":{f"{property}":{"max":f"{max_value}"}}},"on_true":{},"on_false":{}}
-    first_half = possible_states[:max_index + 1] # [..., max_index]
-    second_half = possible_states[max_index + 1:] # (max_index, ...]
-    body["on_true"] = get_individual_block_state_provider_body(property, first_half, value_offset)
-    body["on_false"] = get_individual_block_state_provider_body(property, second_half, value_offset + max_index + 1)
+    first_half = branch_state_indices[:max_index + 1] # [..., max_index]
+    second_half = branch_state_indices[max_index + 1:] # (max_index, ...]
+    body["on_true"] = get_individual_block_state_provider_body(property, all_value_class_states, first_half, value_offset)
+    body["on_false"] = get_individual_block_state_provider_body(property, all_value_class_states, second_half, value_offset)
     return body
-
-# TODO: Fix the oversight where if a block state isn't present, the returned value is 0 instead of -1 (I didn't add a case for "default" at the bottom level in get_individual_block_state_provider_body. Maybe I can add it somewhere else though? Perhaps a block tag check at the top for "does this block even have this property?" Or a "min:0" at the very top?)
-# TODO: There's an MC bug that fails the "max" check if it's outside the current block's cap. Either wait until that bug is fixed, or add block tag checks, or don't do binary search. Or split the ages into different value classes too? Does this affect other block state properties as well?
-#       => Provide number providers that check for the value range block tag at the top (default: -1) that run special internal number providers that only work with the specific range. "Get all blockstates" for any block would directly run those internal ones
 
 # Logic:
 # - Inside a value class, name the block tags for "value range" 'branch'
@@ -201,4 +244,4 @@ branches = get_value_class_branches(groups)
 gen_value_class_tags(branches)
 
 block_property_data = get_block_property_data()
-gen_individual_block_state_providers(block_property_data)
+gen_individual_block_state_providers(block_property_data, branches, groups)
