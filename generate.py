@@ -57,6 +57,8 @@ def gen_block_id_provider(bit_count):
 def get_block_state_groups(block_value_data): # A group consists of blocks that share the same possible block states across all properties.
     groups = {} # {(tuple containing all properties with value class & possible values):[all blocks that match]}
     for block, block_data in block_value_data.items():
+        if block_data == {}: # Don't make a group for "no blockstates"
+            continue
         key = tuple(
             (property, value_data["value_class"], tuple(value_data["values"]))
             for property, value_data in sorted(block_data.items()) # Should already be pre-sorted from the datagen, but just in case
