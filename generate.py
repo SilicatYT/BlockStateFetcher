@@ -29,7 +29,7 @@ def gen_block_id_tags(bit_count, blocks):
 
     # Fill block tag data
     for i, block_id in enumerate(blocks):
-        bits = [(i >> bit) & 1 for bit in range(bit_count - 1, -1, -1)] # Create a list of bits that represent i, taken from stackoverflow
+        bits = [(i >> bit) & 1 for bit in range(bit_count)] # Create a list of bits that represent i, taken from stackoverflow
         for j, bit in enumerate(bits):
             if bit == 1:
                 block_tags_data[j]["values"].append(block_id)
@@ -87,6 +87,36 @@ def gen_block_state_group_tags(groups):
         with file_path.open("w") as f:
             json.dump(block_tag_data, f, separators=(',', ':'))
 
+
+def gen_group_id_tags(bit_count, groups):
+    bit_count = math.ceil(math.log2(len(groups)))
+    block_tags_data = [{"values": []} for _ in range(bit_count)]
+
+    # Fill block tag data
+    for i in range(len(groups)):
+        bits = [(i >> bit) & 1 for bit in range(bit_count)]
+        for j, bit in enumerate(bits):
+            if bit == 1:
+                block_tags_data[j]["values"].append(f"#{DATAPACK_NAMESPACE}:groups/{i}")
+
+    # Write data to block tags
+    folder_path = BLOCK_TAGS_FOLDER_PATH / "group_id"
+    folder_path.mkdir(parents=True, exist_ok=True)
+
+    for i in range(bit_count):
+        file_path = folder_path / f"b{i}.json"
+        with file_path.open("w") as f:
+            json.dump(block_tags_data[i], f, separators=(',', ':'))
+
+
+def gen_group_id_provider(bit_count):
+    number_provider_data = {"type":"minecraft:add","inputs":[]}
+    for i in range(bit_count):
+        number_provider_data["inputs"].append({"type":"minecraft:conditional","condition":{"type":"minecraft:match_block","blocks":f"#{DATAPACK_NAMESPACE}:group_id/b{i}"},"on_true":2**i})
+
+    file_path = NUMBER_PROVIDERS_FOLDER_PATH / "group_id.json"
+    with file_path.open("w") as f:
+        json.dump(number_provider_data, f, separators=(',', ':'))
 
 
 def get_value_class_branches(groups): # Different branches of the same value class have different possible values, but pull from the same value pool.
@@ -240,7 +270,10 @@ gen_block_id_tags(bit_count, blocks)
 gen_block_id_provider(bit_count)
 
 groups = get_block_state_groups(block_value_data)
+bit_count = math.ceil(math.log2(len(groups)))
 gen_block_state_group_tags(groups)
+gen_group_id_tags(bit_count, groups)
+gen_group_id_provider(bit_count)
 
 branches = get_value_class_branches(groups)
 gen_value_class_tags(branches)
